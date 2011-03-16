@@ -7,7 +7,7 @@
   (:require pallet.compute.vmfest
             [pallet.crate.ssh-key :as ssh-key]
             [pallet.resource.user :as user]
-            [pallet.parameter :as parameters]))
+            [pallet.parameter :as parameter]))
 
 (defn create-master-user
   [request & {:keys [user] :or {user "master"}}]
@@ -24,9 +24,8 @@
 (defn create-slave-user
   [request & {:keys [user master] :or {user "slave"
                                        master "master"}}]
-  (println (:parameters request))
   (let [master-key
-        (parameters/lookup
+        (parameter/get-for
          request
          [:host :master :user (keyword master) :id_rsa])]
     (->
@@ -38,9 +37,7 @@
                 :shell :bash)
      (ssh-key/authorize-key
       user
-      (parameters/lookup
-       request
-       [:host :master :user (keyword master) :id_rsa])))))
+      master-key))))
 
 (defn debug [req & comment]
   (when comment (println "***" comment))
@@ -55,17 +52,14 @@
               create-master-user)
   :configure (phase
               ;; pulls the key and stores it into
-              ;; [:parameters :master :id_rsa]
-              ;;(debug "before")
-              (ssh-key/record-public-key "master")
-              ;;(debug "after")
-              ))
+              ;; [:host :master :user :master :id_rsa]
+              (ssh-key/record-public-key "master")))
 
 (defnode slave
   {:os-family :ubuntu
    :os-64-bit true}
   :bootstrap automated-admin-user
-  :authorize-master create-slave-user)
+  :configure create-slave-user)
 
 (comment
   (use 'pallet.core)
