@@ -8,7 +8,9 @@
             [pallet.crate.ssh-key :as ssh-key]
             [pallet.resource.user :as user]
             [pallet.parameter :as parameter]
-            [pallet.resource :as resource]) ())
+            [pallet.resource :as resource]
+            [pallet.compute :as compute]
+            [pallet.request-map :as request-map]))
 
 (defn create-master-user
   [request & {:keys [user] :or {user "master"}}]
@@ -22,13 +24,22 @@
    ;; generates the key for the user in the master node
    (ssh-key/generate-key user :comment "master_key")))
 
+(defn- get-master-host-id
+  "Get the id of the 'master' node"
+  [request master-tag]
+  ;; assuming there is only one instance of the "master" node
+  (let [[master-node] (request-map/nodes-in-tag request master-tag)]
+    (compute/id master-node)))
+
 (defn create-slave-user
   [request & {:keys [user master] :or {user "slave"
                                        master "master"}}]
-  (let [master-key
+  (let [master-id (get-master-host-id request master)
+        ;; get the key for the master node from the parameters
+        master-key
         (parameter/get-for
          request
-         [:host :master :user (keyword master) :id_rsa])]
+         [:host (keyword master-id) :user (keyword master) :id_rsa])]
     (->
      request
      ;; create the slave user
@@ -52,23 +63,30 @@
               automated-admin-user
               create-master-user)
   :configure (phase
-              (resource/execute-pre-phase
-               ;; pulls the key and stores it into
-               ;; [:host :master :user :master :id_rsa]
-               (ssh-key/record-public-key "master")
-               (debug "after record-public-key"))))
+              ;; pulls the key and stores it into
+              ;; [:host :<master-id> :user :master :id_rsa]
+              (ssh-key/record-public-key "master")
+              (debug "after record-public-key")))
 
 (defnode slave
   {:os-family :ubuntu
    :os-64-bit true}
   :bootstrap automated-admin-user
-  :configure (phase
-              (debug "before config slave user")
-              create-slave-user))
+  :auth-master (phase
+                (debug "before config slave user")
+                create-slave-user))
 
 (comment
   (use 'pallet.core)
   (use 'pallet.compute)
   (def service (compute-service-from-config-file :virtualbox))
   (use 'ssh-keys.node)
-  (converge {master 1 slave 3} :compute service :environment local-env))
+  ;; create the configuration
+  (converge {master 1 slave 3} :compute service :phase [:configure :auth-master])
+  ;; $ ssh <master-ip>)
+  ;; once in the master node
+  ;; $ sudo su - master
+  ;; $ ssh slave@<slave-ip>
+  ;; notice how there was no password needed for the master to ssh
+  ;; into the slave :)
+  )
